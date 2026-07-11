@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from typing import List, Tuple
 from dotenv import load_dotenv
@@ -19,6 +20,40 @@ load_dotenv()
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+def retry_on_rate_limit(max_attempts=5, initial_wait=2.0, backoff_factor=2.0):
+    """Exponential backoff decorator to retry on Groq rate limits (HTTP 429)."""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            wait_time = initial_wait
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    is_rate_limit = "rate limit" in err_msg or "429" in err_msg or "too many requests" in err_msg
+                    if is_rate_limit and attempt < max_attempts:
+                        logger.warning(
+                            f"Groq API rate limit hit (attempt {attempt}/{max_attempts}). "
+                            f"Retrying in {wait_time:.1f}s... Error: {e}"
+                        )
+                        time.sleep(wait_time)
+                        wait_time *= backoff_factor
+                    else:
+                        raise e
+        return wrapper
+    return decorator
+
+class RetryingChatGroq(ChatGroq):
+    """Subclass of ChatGroq that wraps invoke and stream calls with rate-limit retry protection."""
+    
+    def invoke(self, *args, **kwargs):
+        decorator = retry_on_rate_limit(max_attempts=5, initial_wait=2.0)
+        return decorator(super().invoke)(*args, **kwargs)
+
+    def stream(self, *args, **kwargs):
+        decorator = retry_on_rate_limit(max_attempts=5, initial_wait=2.0)
+        return decorator(super().stream)(*args, **kwargs)
 
 class RAGChain:
     """
@@ -61,8 +96,8 @@ class RAGChain:
                 "This is a second fake response about photosynthesis."
             ])
         else:
-            logger.info(f"Initializing ChatGroq: {self.model_name} (temp={self.temperature})...")
-            self.llm = ChatGroq(
+            logger.info(f"Initializing RetryingChatGroq: {self.model_name} (temp={self.temperature})...")
+            self.llm = RetryingChatGroq(
                 model=self.model_name, 
                 temperature=self.temperature,
                 groq_api_key=groq_api_key
@@ -91,7 +126,8 @@ class RAGChain:
                     query=inputs["question"],
                     index_bundle=self.index_bundle,
                     k=self.k,
-                    rrf_k=self.rrf_k
+                    rrf_k=self.rrf_k,
+                    metadata_filter=inputs.get("metadata_filter")
                 )
             )
         )
@@ -129,12 +165,12 @@ class RAGChain:
         
         return lcel_chain
 
-    def query(self, question: str) -> str:
+    def query(self, question: str, metadata_filter: dict = None) -> str:
         """
         Queries the RAG chain on a question. Computes multi-turn chat history context,
         updates the instance history list, and returns the response.
         """
-        logger.info(f"Received query: '{question}'")
+        logger.info(f"Received query: '{question}' with filter: {metadata_filter}")
         
         # 1. Format chat history from memories list to string
         history_lines = []
@@ -146,7 +182,8 @@ class RAGChain:
         # 2. Prepare inputs for LCEL chain
         inputs = {
             "question": question,
-            "chat_history_str": chat_history_str
+            "chat_history_str": chat_history_str,
+            "metadata_filter": metadata_filter
         }
 
         # 3. Execute
@@ -158,13 +195,13 @@ class RAGChain:
 
         return response
 
-    def query_with_contexts(self, question: str) -> Tuple[str, List[Document]]:
+    def query_with_contexts(self, question: str, metadata_filter: dict = None) -> Tuple[str, List[Document]]:
         """
         Runs the query through the retrieval pipeline, returning both the final answer
         and the list of reranked candidate Document objects that were compiled into
         the final prompt.
         """
-        logger.info(f"Received query with contexts: '{question}'")
+        logger.info(f"Received query with contexts: '{question}' with filter: {metadata_filter}")
         
         # Format chat history from memories list to string
         history_lines = []
@@ -178,7 +215,8 @@ class RAGChain:
             query=question,
             index_bundle=self.index_bundle,
             k=self.k,
-            rrf_k=self.rrf_k
+            rrf_k=self.rrf_k,
+            metadata_filter=metadata_filter
         )
         
         # Extract direct document elements from hybrid search tuples
@@ -223,3 +261,32 @@ class RAGChain:
                 final_docs.append(doc)
                 
         return response, final_docs
+
+    def query_stream(self, question: str, metadata_filter: dict = None):
+        """
+        Queries the RAG chain on a question and yields chunks of the response in real time.
+        Appends the consolidated response to the dialog session memory.
+        """
+        logger.info(f"Received query stream: '{question}' with filter: {metadata_filter}")
+        
+        # Format chat history from memories list to string
+        history_lines = []
+        for q, a in self.chat_history:
+            history_lines.append(f"User: {q}")
+            history_lines.append(f"Assistant: {a}")
+        chat_history_str = "\n".join(history_lines) if history_lines else "No previous chat history."
+
+        inputs = {
+            "question": question,
+            "chat_history_str": chat_history_str,
+            "metadata_filter": metadata_filter
+        }
+
+        full_response_parts = []
+        for chunk in self.chain.stream(inputs):
+            full_response_parts.append(chunk)
+            yield chunk
+
+        consolidated = "".join(full_response_parts)
+        self.chat_history.append((question, consolidated))
+        logger.info("Dialogue appended to chat history after streaming completed.")

@@ -24,43 +24,13 @@ def hybrid_search(
     query: str, 
     index_bundle: IndexBundle, 
     k: int = None, 
-    rrf_k: int = None
+    rrf_k: int = None,
+    metadata_filter: dict = None
 ) -> List[Tuple[Document, float]]:
     """
     Performs hybrid search combining BM25 (sparse) and Chroma (dense) retrieval
-    using Reciprocal Rank Fusion (RRF).
-
-    Reciprocal Rank Fusion (RRF) Formula:
-        RRF_Score(d) = sum_{m in M} ( 1 / (rrf_k + r_m(d)) )
-        
-        where:
-        - M is the set of retrievers (in our case, BM25 and Chroma).
-        - r_m(d) is the 1-based rank position of document d in retriever m's output.
-        - rrf_k is a constant parameter (default 60) that prevents high-ranking 
-          documents from completely dominating the final score.
-
-    Why Rank Fusion is used instead of combining raw scores directly:
-        1. Scale Incompatibility: BM25 scores are unbounded positive logits representing 
-           lexical term relevance, while Chroma vector search similarity scores are 
-           distance metrics (e.g. cosine distance [0, 2] or L2 distance). They reside on 
-           completely different scales, boundaries, and probability distributions.
-        2. Calibration Sensitivity: Combining raw scores requires normalization rules 
-           or scalar weights (e.g. w1*BM25_score + w2*Vector_score). Choosing these weights 
-           is highly sensitive, text-domain dependent, and shifts easily when documents are 
-           added or model weights update.
-        3. Distribution Independency: RRF relies solely on relative rank sequences. Any 
-           retriever and model rank distribution can be fused directly without scaling or 
-           calibration, yielding a scoring logic that is extremely robust and generalizable.
-
-    Parameters:
-        query: The raw search string.
-        index_bundle: The IndexBundle containing BM25, Chroma, and source chunks.
-        k: The number of final fused documents to return.
-        rrf_k: Reciprocal Rank Fusion constant parameter (defaults to 60).
-
-    Returns:
-        A list of (Document, float) tuples containing the top-k fused results
-        sorted in descending order of their reciprocal rank fusion score.
+    using Reciprocal Rank Fusion (RRF), supporting metadata pre-filtering on
+    source/page/doc_id attributes.
     """
     if not index_bundle.chunks:
         logger.warning("Empty chunk list in IndexBundle, returning empty results.")
@@ -71,7 +41,46 @@ def hybrid_search(
     if rrf_k is None:
         rrf_k = int(os.getenv("RRF_K", "60"))
 
-    logger.info(f"Initiating hybrid search for query: '{query}' (k={k}, rrf_k={rrf_k})")
+    # Resolve all matching chunk indices for BM25 metadata filtering
+    matching_indices = set()
+    if metadata_filter:
+        for idx, doc in enumerate(index_bundle.chunks):
+            match = True
+            for key, val in metadata_filter.items():
+                meta_val = doc.metadata.get(key)
+                if isinstance(val, list):
+                    if meta_val not in val:
+                        match = False
+                        break
+                else:
+                    if meta_val != val:
+                        match = False
+                        break
+            if match:
+                matching_indices.add(idx)
+
+        if not matching_indices:
+            logger.info("Metadata filter active but no document chunks match criteria. Returning empty.")
+            return []
+
+    # Map metadata filter directly onto Chroma client where query syntax format
+    chroma_filter = None
+    if metadata_filter:
+        filter_parts = []
+        for key, val in metadata_filter.items():
+            if isinstance(val, list):
+                if len(val) == 1:
+                    filter_parts.append({key: val[0]})
+                elif len(val) > 1:
+                    filter_parts.append({key: {"$in": val}})
+            else:
+                filter_parts.append({key: val})
+        if len(filter_parts) == 1:
+            chroma_filter = filter_parts[0]
+        elif len(filter_parts) > 1:
+            chroma_filter = {"$and": filter_parts}
+
+    logger.info(f"Initiating hybrid search for query: '{query}' (k={k}, rrf_k={rrf_k}, filter={metadata_filter})")
 
     # Build document identity maps to link back to the exact pristine chunk instances
     key_to_doc = {_get_chunk_key(doc): doc for doc in index_bundle.chunks}
@@ -84,16 +93,24 @@ def hybrid_search(
     ranked_bm25_indices = np.argsort(bm25_scores)[::-1]
     
     bm25_ranks = {}
-    for rank_idx, doc_idx in enumerate(ranked_bm25_indices):
+    rank_count = 1
+    for doc_idx in ranked_bm25_indices:
+        if metadata_filter and doc_idx not in matching_indices:
+            continue
         doc = index_bundle.chunks[doc_idx]
         key = _get_chunk_key(doc)
         # Record 1-based rank
-        bm25_ranks[key] = rank_idx + 1
+        bm25_ranks[key] = rank_count
+        rank_count += 1
 
     # --- 2. Dense Ranker (Chroma Similarity Search) ---
-    # Query Chroma for all documents in the bundle to get a complete rank order
+    # Query Chroma for documents, passing the metadata filter directly
     num_chunks = len(index_bundle.chunks)
-    vector_docs = index_bundle.vectorstore.similarity_search(query, k=num_chunks)
+    vector_docs = index_bundle.vectorstore.similarity_search(
+        query, 
+        k=num_chunks,
+        filter=chroma_filter
+    )
     
     vector_ranks = {}
     for rank_idx, doc in enumerate(vector_docs):

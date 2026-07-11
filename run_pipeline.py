@@ -44,18 +44,54 @@ def main():
         
     # 3. Interactive CLI Query loop
     print("\nYou can now ask questions about the ingested documents. (Type 'exit' to quit)")
+    
+    try:
+        docs = pipeline.list_documents()
+        if docs:
+            print("\nPresenting uploaded PDF files:")
+            for idx, doc in enumerate(docs):
+                print(f"  [{idx + 1}] {doc['filename']} ({doc['page_count']} pages, indexed ✓)")
+            initial_sel = input("\nSelect target PDFs to query (e.g. 'all', '1,3', or '2'): ").strip()
+            pipeline.select_documents(initial_sel)
+            if pipeline.selected_doc_ids:
+                selected_names = [d['filename'] for d in docs if d['doc_id'] in pipeline.selected_doc_ids]
+                print(f"Scoping query selection to: {', '.join(selected_names)}")
+            else:
+                print("Scoping query selection to ALL document units.")
+    except Exception as pr_err:
+        print(f"Failed to load document selection menu: {pr_err}")
+
     while True:
         try:
-            query = input("\nQuery: ").strip()
+            query = input("\nQuery (or type 'select' to change file scope): ").strip()
             if not query:
                 continue
             if query.lower() in ("exit", "quit", "q"):
                 print("Goodbye!")
                 break
                 
+            if query.lower() == "select":
+                docs = pipeline.list_documents()
+                if docs:
+                    print("\nPresenting uploaded PDF files:")
+                    for idx, doc in enumerate(docs):
+                        print(f"  [{idx + 1}] {doc['filename']} ({doc['page_count']} pages, indexed ✓)")
+                    new_sel = input("\nSelect target PDFs to query (e.g. 'all', '1,3', or '2'): ").strip()
+                    pipeline.select_documents(new_sel)
+                    if pipeline.selected_doc_ids:
+                        selected_names = [d['filename'] for d in docs if d['doc_id'] in pipeline.selected_doc_ids]
+                        print(f"Scoping query selection key changed to: {', '.join(selected_names)}")
+                    else:
+                        print("Scoping query selection key reset to ALL document units.")
+                else:
+                    print("No indexed documents registered.")
+                continue
+
             print("Thinking...")
-            answer = pipeline.query(query)
-            print(f"\nAnswer:\n{answer}")
+            print("Answer: ", end="", flush=True)
+            for chunk in pipeline.query_stream(query):
+                print(chunk, end="", flush=True)
+            print()
         except KeyboardInterrupt:
             print("\nGoodbye!")
             break

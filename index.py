@@ -60,13 +60,48 @@ def build_indexes(chunks: List[Document]) -> IndexBundle:
         model_kwargs={"device": "cpu"}
     )
     
-    logger.info(f"Creating Chroma vector store at '{persist_directory}'...")
-    vectorstore = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        collection_name=collection_name,
-        persist_directory=persist_directory
-    )
+    # Check if this collection already exists and is populated in Chroma database
+    already_indexed = False
+    try:
+        import chromadb
+        client = chromadb.PersistentClient(path=persist_directory)
+        existing_collections = [c.name for c in client.list_collections()]
+        if collection_name in existing_collections:
+            col = client.get_collection(collection_name)
+            if col.count() > 0:
+                already_indexed = True
+                logger.info(f"Chroma collection '{collection_name}' already exists and contains {col.count()} documents. Skipping re-embedding.")
+    except Exception as e:
+        logger.warning(f"Could not check Chroma database for existing collection '{collection_name}': {e}")
+
+    if already_indexed:
+        logger.info(f"Re-initializing Chroma vector store wrapper around existing collection '{collection_name}'...")
+        vectorstore = Chroma(
+            collection_name=collection_name,
+            embedding_function=embeddings,
+            persist_directory=persist_directory
+        )
+        try:
+            col_data = vectorstore._collection.get()
+            if col_data and col_data.get("documents"):
+                loaded_chunks = []
+                metas = col_data.get("metadatas") or [{}] * len(col_data["documents"])
+                for doc_text, meta in zip(col_data["documents"], metas):
+                    # Ensure metadata is not None
+                    loaded_chunks.append(Document(page_content=doc_text, metadata=meta or {}))
+                if loaded_chunks:
+                    chunks = loaded_chunks
+                    logger.info(f"Loaded {len(chunks)} exact document chunks from Chroma to ensure consistency.")
+        except Exception as load_err:
+            logger.warning(f"Could not load documents from existing collection to ensure consistency: {load_err}")
+    else:
+        logger.info(f"Creating Chroma vector store at '{persist_directory}'...")
+        vectorstore = Chroma.from_documents(
+            documents=chunks,
+            embedding=embeddings,
+            collection_name=collection_name,
+            persist_directory=persist_directory
+        )
     
     # 3. Build BM25 Okapi Index
     # Read chunk text, lowercase, and tokenize by whitespace

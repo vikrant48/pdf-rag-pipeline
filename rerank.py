@@ -11,10 +11,21 @@ load_dotenv()
 # Configure logging
 logger = logging.getLogger(__name__)
 
+DISABLE_RERANKER = os.getenv("DISABLE_RERANKER", "false").lower() == "true"
+
+if not DISABLE_RERANKER:
+    from sentence_transformers import CrossEncoder
+else:
+    logger.info("Reranker is disabled via DISABLE_RERANKER env var. Skipped CrosEncoder model imports.")
+    CrossEncoder = None
+
 _model_cache = {}
 
 def get_reranker_model(model_name: str) -> CrossEncoder:
     """Retrieves or initializes the CrossEncoder model with global caching to bypass redundant checks."""
+    if DISABLE_RERANKER:
+        raise ValueError("Reranker model load attempted but DISABLE_RERANKER is active.")
+        
     if model_name not in _model_cache:
         logger.info(f"Initializing CrossEncoder '{model_name}' on CPU (one-time load)...")
         try:

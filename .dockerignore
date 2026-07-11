@@ -1,0 +1,17 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+data/
+.git/
+.gitignore
+test_*.py
+*.sqlite
+*.sqlite3
+Dockerfile
+docker-compose.yml
+deployment_guide.md
+task.md
+walkthrough.md
+implementation_plan.md

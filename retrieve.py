@@ -20,6 +20,14 @@ def _get_chunk_key(doc: Document) -> Tuple[str, int, str]:
         doc.page_content
     )
 
+# Simple in-memory cache mapping (query, allowed_doc_ids_tuple) -> List[Tuple[Document, float]]
+_retrieval_cache = {}
+
+def clear_retrieval_cache():
+    """Clears the global retrieval cache."""
+    _retrieval_cache.clear()
+    logger.info("Retrieval cache cleared.")
+
 def hybrid_search(
     query: str, 
     index_bundle: IndexBundle, 
@@ -40,6 +48,20 @@ def hybrid_search(
         k = int(os.getenv("RETRIEVAL_K", "5"))
     if rrf_k is None:
         rrf_k = int(os.getenv("RRF_K", "60"))
+
+    # Resolve document selection to build cache key
+    allowed_doc_ids = None
+    if metadata_filter and "doc_id" in metadata_filter:
+        val = metadata_filter["doc_id"]
+        if isinstance(val, list):
+            allowed_doc_ids = tuple(sorted(val))
+        elif isinstance(val, str):
+            allowed_doc_ids = (val,)
+
+    cache_key = (query.strip().lower(), allowed_doc_ids)
+    if cache_key in _retrieval_cache:
+        logger.info(f"Retrieval cache hit for query: '{query}' with doc scope: {allowed_doc_ids}")
+        return _retrieval_cache[cache_key]
 
     # Resolve all matching chunk indices for BM25 metadata filtering
     matching_indices = set()
@@ -140,4 +162,5 @@ def hybrid_search(
         fused_results.append((original_doc, rrf_scores[key]))
 
     logger.info(f"RRF retrieval completed. Returned {len(fused_results)} documents.")
+    _retrieval_cache[cache_key] = fused_results
     return fused_results

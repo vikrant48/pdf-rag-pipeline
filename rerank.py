@@ -11,13 +11,34 @@ load_dotenv()
 # Configure logging
 logger = logging.getLogger(__name__)
 
+_model_cache = {}
+
+def get_reranker_model(model_name: str) -> CrossEncoder:
+    """Retrieves or initializes the CrossEncoder model with global caching to bypass redundant checks."""
+    if model_name not in _model_cache:
+        logger.info(f"Initializing CrossEncoder '{model_name}' on CPU (one-time load)...")
+        try:
+            # Attempt normal online initialization/check
+            _model_cache[model_name] = CrossEncoder(model_name, device="cpu")
+        except Exception as e:
+            logger.warning(
+                f"Network or host lookup failed for CrossEncoder model check: {e}. "
+                "Attempting to load model from local cache only (local_files_only=True)..."
+            )
+            try:
+                _model_cache[model_name] = CrossEncoder(model_name, device="cpu", local_files_only=True)
+            except Exception as local_err:
+                logger.error(f"Failed to load CrossEncoder model locally: {local_err}")
+                raise local_err
+    return _model_cache[model_name]
+
 def rerank_results(
     query: str, 
     docs: List[Document], 
     top_n: int = None
 ) -> List[Tuple[float, Document]]:
     """
-    Reranks retrieving candidate Document list using CrossEncoder model.
+    Reranks retrieving candidate Document list using a cached CrossEncoder model.
     Returns the top_n results as a list of (score, doc) tuples sorted descending by score.
     """
     if not docs:
@@ -31,8 +52,12 @@ def rerank_results(
     model_name = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
     logger.info(f"Reranking {len(docs)} documents using CrossEncoder '{model_name}'...")
     
-    # Initialize the cross-encoder on CPU to keep resource constraints light
-    model = CrossEncoder(model_name, device="cpu")
+    try:
+        model = get_reranker_model(model_name)
+    except Exception as e:
+        logger.error(f"Cannot perform reranking without a loaded CrossEncoder: {e}. Skipping rerank phase.")
+        # Fallback gracefully by assigning 0.0 scores to all docs (keeping them in original retrieval order)
+        return [(0.0, doc) for doc in docs][:top_n]
     
     # Format input pairs
     pairs = [[query, doc.page_content] for doc in docs]
@@ -51,3 +76,4 @@ def rerank_results(
     
     logger.info(f"Reranking complete. Returning top {min(top_n, len(scored_docs))} documents.")
     return scored_docs[:top_n]
+

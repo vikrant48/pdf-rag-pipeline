@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import json
 from typing import List, Tuple
 from dotenv import load_dotenv
 
@@ -83,8 +84,8 @@ class RAGChain:
         self.rerank_top_n = rerank_top_n if rerank_top_n is not None else int(os.getenv("RERANK_TOP_N", "5"))
         self.max_tokens = max_tokens if max_tokens is not None else int(os.getenv("MAX_TOKENS", "2000"))
 
-        # Instance-level chat history memory list of (user_message, assistant_response) tuples
-        self.chat_history: List[Tuple[str, str]] = []
+        # JSON file to load/save chat history registry
+        self.history_path = os.path.join("data", "chat_history.json")
 
         # Build the LLM instance
         groq_api_key = os.getenv("GROQ_API_KEY")
@@ -165,16 +166,51 @@ class RAGChain:
         
         return lcel_chain
 
-    def query(self, question: str, metadata_filter: dict = None) -> str:
+    def get_session_history(self, session_id: str) -> List[Tuple[str, str]]:
+        """Returns the dialogue history list for a session_id from the database."""
+        from db import db_get_chat_history
+        return db_get_chat_history(session_id)
+
+    def _append_session_dialogue(self, session_id: str, question: str, response: str):
+        """Appends a new query-response dialogue pair to the database."""
+        from db import db_save_chat
+        db_save_chat(session_id, question, response)
+
+    @property
+    def chat_history(self) -> List[Tuple[str, str]]:
+        """Legacy property mapping to 'default' session history. Reads/writes from DB."""
+        return self.get_session_history("default")
+
+    @chat_history.setter
+    def chat_history(self, val):
+        # Allow clearing 'default' for legacy compatibility
+        if not val:
+            from db import get_connection, is_postgres_conn
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                is_pg = is_postgres_conn(conn)
+                if is_pg:
+                    cursor.execute("DELETE FROM chat_history_logs WHERE session_id = %s;", ("default",))
+                else:
+                    cursor.execute("DELETE FROM chat_history_logs WHERE session_id = ?;", ("default",))
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                logger.error(f"Failed to clear default session history: {e}")
+
+    def query(self, question: str, metadata_filter: dict = None, session_id: str = "default") -> str:
         """
         Queries the RAG chain on a question. Computes multi-turn chat history context,
-        updates the instance history list, and returns the response.
+        updates the persistent session history, and returns the response.
         """
-        logger.info(f"Received query: '{question}' with filter: {metadata_filter}")
+        logger.info(f"Received query: '{question}' for session: '{session_id}' with filter: {metadata_filter}")
         
         # 1. Format chat history from memories list to string
+        session_history = self.get_session_history(session_id)
         history_lines = []
-        for q, a in self.chat_history:
+        for q, a in session_history:
             history_lines.append(f"User: {q}")
             history_lines.append(f"Assistant: {a}")
         chat_history_str = "\n".join(history_lines) if history_lines else "No previous chat history."
@@ -190,22 +226,22 @@ class RAGChain:
         response = self.chain.invoke(inputs)
 
         # 4. Append dialogue session context to chat memory
-        self.chat_history.append((question, response))
-        logger.info("Dialogue appended to chat history.")
+        self._append_session_dialogue(session_id, question, response)
 
         return response
 
-    def query_with_contexts(self, question: str, metadata_filter: dict = None) -> Tuple[str, List[Document]]:
+    def query_with_contexts(self, question: str, metadata_filter: dict = None, session_id: str = "default") -> Tuple[str, List[Document]]:
         """
         Runs the query through the retrieval pipeline, returning both the final answer
         and the list of reranked candidate Document objects that were compiled into
         the final prompt.
         """
-        logger.info(f"Received query with contexts: '{question}' with filter: {metadata_filter}")
+        logger.info(f"Received query with contexts: '{question}' for session: '{session_id}' with filter: {metadata_filter}")
         
         # Format chat history from memories list to string
+        session_history = self.get_session_history(session_id)
         history_lines = []
-        for q, a in self.chat_history:
+        for q, a in session_history:
             history_lines.append(f"User: {q}")
             history_lines.append(f"Assistant: {a}")
         chat_history_str = "\n".join(history_lines) if history_lines else "No previous chat history."
@@ -242,6 +278,7 @@ class RAGChain:
             question=question
         )
         
+        # Invoke response through LLM
         response_msg = self.llm.invoke(prompt_val.to_messages())
         
         # Extract content
@@ -251,8 +288,7 @@ class RAGChain:
             response = str(response_msg)
 
         # Update chat history
-        self.chat_history.append((question, response))
-        logger.info("Dialogue appended to chat history in query_with_contexts.")
+        self._append_session_dialogue(session_id, question, response)
         
         # Filter final set of documents to include only those that actually fit in context_str
         final_docs = []
@@ -262,16 +298,17 @@ class RAGChain:
                 
         return response, final_docs
 
-    def query_stream(self, question: str, metadata_filter: dict = None):
+    def query_stream(self, question: str, metadata_filter: dict = None, session_id: str = "default"):
         """
         Queries the RAG chain on a question and yields chunks of the response in real time.
         Appends the consolidated response to the dialog session memory.
         """
-        logger.info(f"Received query stream: '{question}' with filter: {metadata_filter}")
+        logger.info(f"Received query stream: '{question}' for session: '{session_id}' with filter: {metadata_filter}")
         
         # Format chat history from memories list to string
+        session_history = self.get_session_history(session_id)
         history_lines = []
-        for q, a in self.chat_history:
+        for q, a in session_history:
             history_lines.append(f"User: {q}")
             history_lines.append(f"Assistant: {a}")
         chat_history_str = "\n".join(history_lines) if history_lines else "No previous chat history."
@@ -288,5 +325,5 @@ class RAGChain:
             yield chunk
 
         consolidated = "".join(full_response_parts)
-        self.chat_history.append((question, consolidated))
+        self._append_session_dialogue(session_id, question, consolidated)
         logger.info("Dialogue appended to chat history after streaming completed.")

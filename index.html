@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity Multi-PDF RAG Service</title>
+    <!-- Modern typography -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 30, 49, 0.7);
+            --border-color: rgba(59, 130, 246, 0.2);
+            --primary-color: #3b82f6;
+            --primary-glow: rgba(59, 130, 246, 0.5);
+            --success-color: #10b981;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent-purple: #8b5cf6;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            background-image:
+                radial-gradient(at 10% 20%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 90% 80%, rgba(139, 92, 246, 0.1) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            padding: 2rem 1rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+            animation: fadeIn 0.8s ease;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.5px;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1rem;
+        }
+
+        /* Top Progress Wizard Steps */
+        .wizard-steps {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            max-width: 650px;
+            margin-bottom: 2.5rem;
+            position: relative;
+            animation: fadeIn 1s ease;
+        }
+
+        .wizard-steps::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: rgba(255, 255, 255, 0.1);
+            z-index: 1;
+            transform: translateY(-50%);
+        }
+
+        .step-indicator {
+            width: 3rem;
+            height: 3rem;
+            border-radius: 50%;
+            background-color: #1f2937;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: 600;
+            z-index: 2;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            color: var(--text-muted);
+            position: relative;
+        }
+
+        .step-indicator.active {
+            border-color: var(--primary-color);
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        .step-indicator.done {
+            border-color: var(--success-color);
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .step-indicator span.step-label {
+            position: absolute;
+            top: calc(100% + 8px);
+            font-size: 0.75rem;
+            font-weight: 500;
+            white-space: nowrap;
+            color: var(--text-muted);
+        }
+
+        .step-indicator.active span.step-label {
+            color: var(--text-main);
+            font-weight: 600;
+        }
+
+        /* Container & Cards */
+        .workspace {
+            width: 100%;
+            max-width: 750px;
+            position: relative;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2.2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(12px);
+            display: none;
+            flex-direction: column;
+            animation: slideUp 0.5s ease;
+        }
+
+        .card.active {
+            display: flex;
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-description {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-bottom: 2rem;
+        }
+
+        /* Ingest / Upload styling */
+        .upload-area {
+            border: 2px dashed rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 3rem 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background-color: rgba(59, 130, 246, 0.03);
+            box-shadow: inset 0 0 15px rgba(59, 130, 246, 0.05);
+        }
+
+        .upload-area svg {
+            width: 50px;
+            height: 50px;
+            fill: none;
+            stroke: var(--text-muted);
+            stroke-width: 1.5;
+            transition: stroke 0.3s ease;
+        }
+
+        .upload-area:hover svg {
+            stroke: var(--primary-color);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .upload-heading {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .upload-subheading {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Progress Ring/Bar */
+        .processing-wrapper {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+            text-align: center;
+            margin-top: 1rem;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.05);
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+        }
+
+        /* Document Selection Step */
+        .doc-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 2rem;
+            padding-right: 0.5rem;
+        }
+
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .doc-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: all 0.25s ease;
+            cursor: pointer;
+        }
+
+        .doc-card:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+
+        .doc-card.selected {
+            background: rgba(59, 130, 246, 0.08);
+            border-color: var(--primary-color);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
+        }
+
+        .doc-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-grow: 1;
+        }
+
+        .checkbox-custom {
+            width: 1.2rem;
+            height: 1.2rem;
+            border-radius: 4px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s ease;
+        }
+
+        .doc-card.selected .checkbox-custom {
+            border-color: var(--primary-color);
+            background-color: var(--primary-color);
+        }
+
+        .checkbox-custom svg {
+            width: 0.7rem;
+            height: 0.7rem;
+            fill: none;
+            stroke: white;
+            stroke-width: 3;
+            display: none;
+        }
+
+        .doc-card.selected .checkbox-custom svg {
+            display: block;
+        }
+
+        .doc-name {
+            font-size: 0.9rem;
+            font-weight: 500;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            overflow: hidden;
+            max-width: 350px;
+        }
+
+        .doc-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.2rem;
+        }
+
+        .badge-s3 {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success-color);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+        }
+
+        .list-empty {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Buttons & Actions */
+        .btn {
+            background: linear-gradient(135deg, var(--primary-color), #2563eb);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0.8rem 1.8rem;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+            filter: brightness(1.05);
+        }
+
+        .btn:disabled {
+            background: #1f2937;
+            color: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+            box-shadow: none;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+            box-shadow: none;
+        }
+
+        .btn-container {
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+        }
+
+        /* Step 3: Chat Interface */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 480px;
+        }
+
+        .chat-messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding-right: 0.5rem;
+        }
+
+        .chat-bubble {
+            max-width: 80%;
+            padding: 1rem;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            animation: slideUp 0.3s ease;
+            word-wrap: break-word;
+        }
+
+        .chat-bubble.user {
+            background-color: var(--primary-color);
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 3px;
+        }
+
+        .chat-bubble.assistant {
+            background-color: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            align-self: flex-start;
+            border-bottom-left-radius: 3px;
+        }
+
+        .chat-bubble.system {
+            align-self: center;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-align: center;
+            max-width: 100%;
+        }
+
+        .chat-input-wrapper {
+            display: flex;
+            gap: 0.8rem;
+            position: relative;
+        }
+
+        .chat-input {
+            flex-grow: 1;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1rem 1.2rem;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 0.9rem;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .chat-input:focus {
+            border-color: var(--primary-color);
+            background: rgba(255, 255, 255, 0.05);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.1);
+        }
+
+        .streaming-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 15px;
+            background-color: var(--primary-color);
+            margin-left: 2px;
+            vertical-align: middle;
+            animation: pulse 0.7s infinite alternate;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 0.2;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>RAG Portal</h1>
+        <p>Production Multi-PDF Retrieval-Augmented Generation Service</p>
+    </header>
+
+    <!-- Progress steps indicators -->
+    <div class="wizard-steps">
+        <div class="step-indicator active" id="step-ind-1">
+            1
+            <span class="step-label">Upload PDF</span>
+        </div>
+        <div class="step-indicator" id="step-ind-2">
+            2
+            <span class="step-label">Select Files</span>
+        </div>
+        <div class="step-indicator" id="step-ind-3">
+            3
+            <span class="step-label">Ask Queries</span>
+        </div>
+    </div>
+
+    <div class="workspace">
+
+        <!-- STEP 1: UPLOAD & INGEST -->
+        <div class="card active" id="card-step-1">
+            <h2 class="card-title">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                Step 1: Upload Document
+            </h2>
+            <p class="card-description">Upload your target PDF. The document will be registered, uploaded to Supabase
+                storage, parsed, and semantically indexed into our Chroma vector database.</p>
+
+            <div class="upload-area" onclick="document.getElementById('pdf-file').click()">
+                <svg viewBox="0 0 24 24">
+                    <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <div class="upload-heading">Drag and drop or click to browse</div>
+                <div class="upload-subheading">PDF files only (maximum 50MB)</div>
+                <input type="file" id="pdf-file" class="file-input" accept="application/pdf"
+                    onchange="handleFileSelect(event)">
+            </div>
+
+            <div class="processing-wrapper" id="upload-status">
+                <div class="spinner"></div>
+                <div style="font-weight: 500;" id="loading-txt">Extracting document pages and organizing table
+                    formats...</div>
+            </div>
+        </div>
+
+        <!-- STEP 2: DOCUMENT SELECTION -->
+        <div class="card" id="card-step-2">
+            <h2 class="card-title">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path
+                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                Step 2: Choose Retrieval Scope
+            </h2>
+            <p class="card-description">Select which documents from the registry you want the search engine to query.
+                Scope queries to specific files or search across all indexed PDFs.</p>
+
+            <div class="doc-list" id="doc-list-container">
+                <!-- Loaded dynamically -->
+                <div class="list-empty">Loading indexed registry...</div>
+            </div>
+
+            <div class="btn-container">
+                <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+                <button class="btn" id="confirm-selection-btn" onclick="confirmSelections()">Continue to Chat</button>
+            </div>
+        </div>
+
+        <!-- STEP 3: INTERACTIVE QUERY AND SSE CHAT -->
+        <div class="card" id="card-step-3">
+            <h2 class="card-title">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path
+                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                Step 3: Query Pipeline
+            </h2>
+            <p class="card-description" id="chat-scope-label">Querying selected documents...</p>
+
+            <div class="chat-container">
+                <div class="chat-messages" id="chat-thread">
+                    <div class="chat-bubble assistant">Hello! I am ready to answer your questions regarding the selected
+                        document files. Ask me anything.</div>
+                </div>
+
+                <div class="chat-input-wrapper">
+                    <input type="text" class="chat-input" id="user-query"
+                        placeholder="Ask details about target terms, statements, or statistics..."
+                        onkeydown="handleQueryInput(event)">
+                    <button class="btn" id="send-query-btn" onclick="submitQuery()">
+                        Send
+                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                            viewBox="0 0 24 24">
+                            <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="btn-container" style="margin-top: 1.5rem;">
+                <button class="btn btn-secondary" onclick="goToStep(2)">Change Selection</button>
+                <button class="btn"
+                    style="background: linear-gradient(135deg, #ef4444, #dc2626); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);"
+                    onclick="window.location.reload()">End Chat</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        let currentStep = 1;
+        let selectedDocIds = [];
+        let indexedDocs = [];
+        // Generate temporary session ID
+        const sessionId = "session_" + Math.random().toString(36).substr(2, 9);
+
+        // Load document list on Step 2 transition
+        async function fetchRegistry() {
+            const container = document.getElementById("doc-list-container");
+            container.innerHTML = '<div class="list-empty">Loading indexed registry...</div>';
+
+            try {
+                const response = await fetch("/documents");
+                const data = await response.json();
+                indexedDocs = data.documents || [];
+
+                if (indexedDocs.length === 0) {
+                    container.innerHTML = '<div class="list-empty">No indexed documents found. Please complete Step 1.</div>';
+                    return;
+                }
+
+                container.innerHTML = "";
+                indexedDocs.forEach((doc, idx) => {
+                    const isSelected = selectedDocIds.includes(doc.doc_id);
+                    const docCard = document.createElement("div");
+                    docCard.className = `doc-card ${isSelected ? 'selected' : ''}`;
+                    docCard.onclick = () => toggleSelectDoc(doc.doc_id, docCard);
+
+                    const badge = doc.s3_key ? `<span class="badge-s3">S3 Storage</span>` : '';
+
+                    docCard.innerHTML = `
+                        <div class="doc-info">
+                            <div class="checkbox-custom">
+                                <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                            </div>
+                            <div>
+                                <div class="doc-name">${doc.filename}</div>
+                                <div class="doc-meta">${doc.page_count} Pages | ${badge}</div>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(docCard);
+                });
+            } catch (err) {
+                console.error("Failed to load documents", err);
+                container.innerHTML = '<div class="list-empty" style="color: #ef4444;">Failed to fetch documents from database.</div>';
+            }
+        }
+
+        function toggleSelectDoc(docId, cardElement) {
+            const idx = selectedDocIds.indexOf(docId);
+            if (idx === -1) {
+                selectedDocIds.push(docId);
+                cardElement.classList.add("selected");
+            } else {
+                selectedDocIds.splice(idx, 1);
+                cardElement.classList.remove("selected");
+            }
+        }
+
+        async function confirmSelections() {
+            const btn = document.getElementById("confirm-selection-btn");
+            btn.disabled = true;
+
+            // If none selected, default to all
+            let selection = "all";
+            if (selectedDocIds.length > 0) {
+                // Find matching indices (1-based)
+                const indices = [];
+                selectedDocIds.forEach(id => {
+                    const i = indexedDocs.findIndex(d => d.doc_id === id);
+                    if (i !== -1) indices.push(i + 1);
+                });
+                selection = indices;
+            }
+
+            try {
+                const response = await fetch("/select", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ selection: selection })
+                });
+                const result = await response.json();
+
+                // Update chat subtitle to list selected file scopes
+                const label = document.getElementById("chat-scope-label");
+                if (result.selected_doc_ids && result.selected_doc_ids.length > 0) {
+                    const filenames = result.selected_documents.map(d => d.filename).join(", ");
+                    label.textContent = `Scoping Query Selection: ${filenames}`;
+                } else {
+                    label.textContent = "Scoping Query Selection: All indexed documents";
+                }
+
+                goToStep(3);
+            } catch (err) {
+                console.error("Select failed", err);
+                alert("Failed to confirm document selection with server.");
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // Handle raw document upload
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const uploadStatus = document.getElementById("upload-status");
+            const loadingTxt = document.getElementById("loading-txt");
+            uploadStatus.style.display = "flex";
+            loadingTxt.textContent = `Ingesting and uploading '${file.filename}'...`;
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            try {
+                const response = await fetch("/ingest", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    loadingTxt.textContent = `Indexed successfully!`;
+                    // Automatically add to selections
+                    if (result.document && !selectedDocIds.includes(result.document.doc_id)) {
+                        selectedDocIds.push(result.document.doc_id);
+                    }
+                    setTimeout(() => {
+                        uploadStatus.style.display = "none";
+                        goToStep(2);
+                    }, 1200);
+                } else {
+                    const errDetail = await response.text();
+                    alert(`Fail: ${errDetail || "Failure indexing document."}`);
+                    uploadStatus.style.display = "none";
+                }
+            } catch (err) {
+                console.error("Network error uploading", err);
+                alert("Server connection failed during ingestion.");
+                uploadStatus.style.display = "none";
+            }
+        }
+
+        // Wizard navigation controller
+        function goToStep(step) {
+            // Manage cards display
+            document.querySelectorAll(".card").forEach(c => c.classList.remove("active"));
+            document.getElementById(`card-step-${step}`).classList.add("active");
+
+            // Manage wizard indicators
+            for (let i = 1; i <= 3; i++) {
+                const ind = document.getElementById(`step-ind-${i}`);
+                ind.className = "step-indicator";
+                if (i === step) {
+                    ind.classList.add("active");
+                } else if (i < step) {
+                    ind.classList.add("done");
+                }
+            }
+
+            currentStep = step;
+            if (step === 2) {
+                fetchRegistry();
+            }
+        }
+
+        // Chat triggers
+        function handleQueryInput(event) {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submitQuery();
+            }
+        }
+
+        async function submitQuery() {
+            const input = document.getElementById("user-query");
+            const queryText = input.value.trim();
+            if (!queryText) return;
+
+            input.value = "";
+            input.disabled = true;
+            document.getElementById("send-query-btn").disabled = true;
+
+            const chatThread = document.getElementById("chat-messages");
+            const thread = document.getElementById("chat-thread");
+
+            // User speech bubble
+            const userBubble = document.createElement("div");
+            userBubble.className = "chat-bubble user";
+            userBubble.textContent = queryText;
+            thread.appendChild(userBubble);
+            thread.scrollTop = thread.scrollHeight;
+
+            // Assistant loading/response bubble
+            const assistantBubble = document.createElement("div");
+            assistantBubble.className = "chat-bubble assistant";
+            assistantBubble.innerHTML = '<span class="streaming-indicator"></span>';
+            thread.appendChild(assistantBubble);
+            thread.scrollTop = thread.scrollHeight;
+
+            try {
+                // Post payload request supporting streaming
+                const response = await fetch("/query_stream", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        question: queryText,
+                        session_id: sessionId,
+                        selection: selectedDocIds.length > 0 ? undefined : "all" // selection resolved by /select state
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error("HTTP error on streaming path.");
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+                assistantBubble.innerHTML = ""; // Clear loader indicator
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n\n");
+                    // Retain trailing incomplete line elements
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (line.trim().startsWith("data: ")) {
+                            const rawData = line.trim().slice(6);
+                            if (rawData) {
+                                // Append letter response tokens
+                                assistantBubble.innerText += rawData;
+                                thread.scrollTop = thread.scrollHeight;
+                            }
+                        }
+                    }
+                }
+
+                // Print remaining buffer content
+                if (buffer.trim().startsWith("data: ")) {
+                    const rawData = buffer.trim().slice(6);
+                    if (rawData) {
+                        assistantBubble.innerText += rawData;
+                    }
+                }
+
+            } catch (err) {
+                console.error("Streaming error: ", err);
+                assistantBubble.innerHTML = `<span style="color: #ef4444;">Error retrieving streaming answer from model pipeline.</span>`;
+            } finally {
+                input.disabled = false;
+                document.getElementById("send-query-btn").disabled = false;
+                input.focus();
+            }
+        }
+    </script>
+</body>
+
+</html>

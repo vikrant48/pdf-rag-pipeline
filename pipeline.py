@@ -42,35 +42,10 @@ class RAGPipeline:
         self.selected_doc_ids = None
         logger.info(f"Initialized RAGPipeline with config: {config}")
 
-    def load_registry(self) -> dict:
-        """Loads registration mapping of ingested PDFs."""
-        if os.path.exists(self.registry_path):
-            try:
-                with open(self.registry_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to read registry: {e}")
-        return {}
-
-    def save_registry(self, registry: dict):
-        """Saves registration mapping of ingested PDFs."""
-        os.makedirs(os.path.dirname(self.registry_path), exist_ok=True)
-        try:
-            with open(self.registry_path, "w", encoding="utf-8") as f:
-                json.dump(registry, f, indent=4)
-        except Exception as e:
-            logger.error(f"Failed to save registry: {e}")
-
     def list_documents(self):
-        """Returns sorted list of indexed documents with index, filename, page_count and doc_id."""
-        registry = self.load_registry()
-        docs = []
-        for doc_id, info in registry.items():
-            docs.append({
-                "doc_id": doc_id,
-                "filename": info["filename"],
-                "page_count": info["page_count"]
-            })
+        """Lists all indexed documents registered in the database, sorted by filename."""
+        from db import db_list_docs
+        docs = db_list_docs()
         docs.sort(key=lambda x: x["filename"])
         return docs
 
@@ -101,12 +76,15 @@ class RAGPipeline:
                 selected_ids.append(docs[idx - 1]["doc_id"])
         self.selected_doc_ids = selected_ids if selected_ids else None
 
-    def ingest(self, pdf_paths: List[str]):
+    def ingest(self, pdf_paths: List[str], s3_metadata: dict = None):
         """
         Coordinates full ingestion phase:
         ingest -> clean -> chunk -> index -> generation chain
         """
         logger.info(f"Starting pipeline ingestion for {len(pdf_paths)} files...")
+        # Clear retrieval cache for fresh ingestion queries
+        from retrieve import clear_retrieval_cache
+        clear_retrieval_cache()
 
         # 1. Ingest
         raw_docs = ingest_pdfs(pdf_paths)
@@ -147,9 +125,9 @@ class RAGPipeline:
             rerank_top_n=self.config.rerank_top_n
         )
         
-        # 6. Update Registry
-        registry = self.load_registry()
+        # 6. Update Database
         from ingest import calculate_sha256
+        from db import db_save_doc
         for path in pdf_paths:
             try:
                 if os.path.exists(path):
@@ -157,23 +135,30 @@ class RAGPipeline:
                     filename = os.path.basename(path)
                     pages_count = sum(1 for d in raw_docs if d.metadata.get("doc_id") == doc_id)
                     if pages_count > 0:
-                        registry[doc_id] = {
-                            "filename": filename,
-                            "page_count": pages_count,
-                            "upload_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(path))),
-                            "status": "indexed"
-                        }
+                        s3_key = None
+                        public_url = None
+                        if s3_metadata and path in s3_metadata:
+                            s3_key, public_url = s3_metadata[path]
+                        db_save_doc(doc_id, filename, s3_key, public_url, pages_count)
                     else:
-                        # If file failed validation or holds zero page elements, exclude/remove it from registry
-                        if doc_id in registry:
-                            del registry[doc_id]
+                        # If file failed validation, remove it from DB if it exists
+                        from db import get_connection, is_postgres_conn
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        is_pg = is_postgres_conn(conn)
+                        if is_pg:
+                            cursor.execute("DELETE FROM uploaded_pdfs WHERE doc_id = %s;", (doc_id,))
+                        else:
+                            cursor.execute("DELETE FROM uploaded_pdfs WHERE doc_id = ?;", (doc_id,))
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
             except Exception as e:
-                logger.error(f"Failed to update registry for {path}: {e}")
-        self.save_registry(registry)
+                logger.error(f"Failed to update database registry for {path}: {e}")
         
         logger.info("Ingestion successfully completed. System is ready to query.")
 
-    def query(self, question: str, metadata_filter: dict = None) -> str:
+    def query(self, question: str, metadata_filter: dict = None, session_id: str = "default") -> str:
         """Queries the underlying generation chain."""
         if self.chain is None:
             raise ValueError("Pipeline has not ingested any documents. Call ingest() first.")
@@ -181,9 +166,9 @@ class RAGPipeline:
             if metadata_filter is None:
                 metadata_filter = {}
             metadata_filter["doc_id"] = self.selected_doc_ids
-        return self.chain.query(question, metadata_filter=metadata_filter)
+        return self.chain.query(question, metadata_filter=metadata_filter, session_id=session_id)
 
-    def query_stream(self, question: str, metadata_filter: dict = None):
+    def query_stream(self, question: str, metadata_filter: dict = None, session_id: str = "default"):
         """Queries the underlying generation chain yielding chunks in real time."""
         if self.chain is None:
             raise ValueError("Pipeline has not ingested any documents. Call ingest() first.")
@@ -191,4 +176,4 @@ class RAGPipeline:
             if metadata_filter is None:
                 metadata_filter = {}
             metadata_filter["doc_id"] = self.selected_doc_ids
-        yield from self.chain.query_stream(question, metadata_filter=metadata_filter)
+        yield from self.chain.query_stream(question, metadata_filter=metadata_filter, session_id=session_id)

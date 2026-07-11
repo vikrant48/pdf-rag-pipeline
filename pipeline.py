@@ -1,7 +1,7 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
 
 from ingest import ingest_pdfs
@@ -39,32 +39,33 @@ class RAGPipeline:
         self.config = config
         self.chain = None
         self.registry_path = os.path.join("data", "registry.json")
-        self.selected_doc_ids = None
+        self.selected_doc_ids = {}
         logger.info(f"Initialized RAGPipeline with config: {config}")
 
-    def list_documents(self):
+    def list_documents(self, session_id: Optional[str] = None):
         """Lists all indexed documents registered in the database, sorted by filename."""
         from db import db_list_docs
-        docs = db_list_docs()
+        docs = db_list_docs(session_id)
         docs.sort(key=lambda x: x["filename"])
         return docs
 
-    def select_documents(self, indices):
+    def select_documents(self, indices, session_id: Optional[str] = None):
         """Sets selected_doc_ids filter based on selection list (e.g. [1,3], integer or 'all')."""
-        docs = self.list_documents()
+        docs = self.list_documents(session_id)
+        sess = session_id or "default"
         if not docs:
-            self.selected_doc_ids = None
+            self.selected_doc_ids[sess] = None
             return
             
         if isinstance(indices, str):
             if indices.strip().lower() == "all":
-                self.selected_doc_ids = None
+                self.selected_doc_ids[sess] = None
                 return
             try:
                 parts = [int(p.strip()) for p in indices.split(",") if p.strip()]
                 indices = parts
             except ValueError:
-                self.selected_doc_ids = None
+                self.selected_doc_ids[sess] = None
                 return
 
         if isinstance(indices, int):
@@ -74,9 +75,9 @@ class RAGPipeline:
         for idx in indices:
             if 1 <= idx <= len(docs):
                 selected_ids.append(docs[idx - 1]["doc_id"])
-        self.selected_doc_ids = selected_ids if selected_ids else None
+        self.selected_doc_ids[sess] = selected_ids if selected_ids else None
 
-    def ingest(self, pdf_paths: List[str], s3_metadata: dict = None):
+    def ingest(self, pdf_paths: List[str], s3_metadata: dict = None, session_id: str = "system"):
         """
         Coordinates full ingestion phase:
         ingest -> clean -> chunk -> index -> generation chain
@@ -93,10 +94,6 @@ class RAGPipeline:
             registry = self.load_registry()
             if registry:
                 logger.info("Raw docs empty, but existing registry found. Initializing indexes from DB.")
-                # We can construct empty list or mock list to trigger fallback building.
-                # Actually, if we have chunks in Chroma, build_indexes(chunks=[]) won't work,
-                # but build_indexes accepts chunks. Let's see: we should raise error if absolutely no chunks
-                # and no index exists yet.
             raise ValueError("No pages were loaded. Ingestion phase aborted.")
 
         # 2. Clean
@@ -139,7 +136,7 @@ class RAGPipeline:
                         public_url = None
                         if s3_metadata and path in s3_metadata:
                             s3_key, public_url = s3_metadata[path]
-                        db_save_doc(doc_id, filename, s3_key, public_url, pages_count)
+                        db_save_doc(doc_id, filename, s3_key, public_url, pages_count, session_id)
                     else:
                         # If file failed validation, remove it from DB if it exists
                         from db import get_connection, is_postgres_conn
@@ -162,18 +159,20 @@ class RAGPipeline:
         """Queries the underlying generation chain."""
         if self.chain is None:
             raise ValueError("Pipeline has not ingested any documents. Call ingest() first.")
-        if self.selected_doc_ids:
+        selected = self.selected_doc_ids.get(session_id or "default")
+        if selected:
             if metadata_filter is None:
                 metadata_filter = {}
-            metadata_filter["doc_id"] = self.selected_doc_ids
+            metadata_filter["doc_id"] = selected
         return self.chain.query(question, metadata_filter=metadata_filter, session_id=session_id)
 
     def query_stream(self, question: str, metadata_filter: dict = None, session_id: str = "default"):
         """Queries the underlying generation chain yielding chunks in real time."""
         if self.chain is None:
             raise ValueError("Pipeline has not ingested any documents. Call ingest() first.")
-        if self.selected_doc_ids:
+        selected = self.selected_doc_ids.get(session_id or "default")
+        if selected:
             if metadata_filter is None:
                 metadata_filter = {}
-            metadata_filter["doc_id"] = self.selected_doc_ids
+            metadata_filter["doc_id"] = selected
         yield from self.chain.query_stream(question, metadata_filter=metadata_filter, session_id=session_id)

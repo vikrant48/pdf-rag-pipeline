@@ -30,7 +30,7 @@ def is_postgres_conn(conn) -> bool:
     return type(conn).__module__.startswith("psycopg2")
 
 def initialize_database():
-    """Initializes the database tables (either Postgres or SQLite)."""
+    """Initializes the database tables (either Postgres or SQLite) with session schema migrations."""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -45,9 +45,20 @@ def initialize_database():
                 s3_key VARCHAR(512),
                 public_url VARCHAR(1024),
                 page_count INTEGER,
+                session_id VARCHAR(255) DEFAULT 'system',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # Migration: Add session_id column if not exists in existing postgres DB
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='uploaded_pdfs' AND column_name='session_id';
+        """)
+        if not cursor.fetchone():
+            logger.info("PG DB Migration: Adding session_id column to uploaded_pdfs table.")
+            cursor.execute("ALTER TABLE uploaded_pdfs ADD COLUMN session_id VARCHAR(255) DEFAULT 'system';")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_history_logs (
                 id SERIAL PRIMARY KEY,
@@ -66,9 +77,17 @@ def initialize_database():
                 s3_key TEXT,
                 public_url TEXT,
                 page_count INTEGER,
+                session_id TEXT DEFAULT 'system',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # Migration: Add session_id column if not exists in existing sqlite DB
+        cursor.execute("PRAGMA table_info(uploaded_pdfs);")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'session_id' not in columns:
+            logger.info("SQLite DB Migration: Adding session_id column to uploaded_pdfs table.")
+            cursor.execute("ALTER TABLE uploaded_pdfs ADD COLUMN session_id TEXT DEFAULT 'system';")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_history_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,43 +103,63 @@ def initialize_database():
     conn.close()
     logger.info("Database initialization completed successfully.")
 
-def db_save_doc(doc_id: str, filename: str, s3_key: str, public_url: str, page_count: int):
-    """Saves or updates an uploaded PDF metadata record."""
+def db_save_doc(doc_id: str, filename: str, s3_key: str, public_url: str, page_count: int, session_id: str = "system"):
+    """Saves or updates an uploaded PDF metadata record tied to a session ID."""
     conn = get_connection()
     cursor = conn.cursor()
     is_pg = is_postgres_conn(conn)
     
     if is_pg:
         query = """
-            INSERT INTO uploaded_pdfs (doc_id, filename, s3_key, public_url, page_count)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO uploaded_pdfs (doc_id, filename, s3_key, public_url, page_count, session_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (doc_id) DO UPDATE SET
                 filename = EXCLUDED.filename,
                 s3_key = EXCLUDED.s3_key,
                 public_url = EXCLUDED.public_url,
-                page_count = EXCLUDED.page_count;
+                page_count = EXCLUDED.page_count,
+                session_id = EXCLUDED.session_id;
         """
-        cursor.execute(query, (doc_id, filename, s3_key, public_url, page_count))
+        cursor.execute(query, (doc_id, filename, s3_key, public_url, page_count, session_id))
     else:
         query = """
-            INSERT OR REPLACE INTO uploaded_pdfs (doc_id, filename, s3_key, public_url, page_count)
-            VALUES (?, ?, ?, ?, ?);
+            INSERT OR REPLACE INTO uploaded_pdfs (doc_id, filename, s3_key, public_url, page_count, session_id)
+            VALUES (?, ?, ?, ?, ?, ?);
         """
-        cursor.execute(query, (doc_id, filename, s3_key, public_url, page_count))
+        cursor.execute(query, (doc_id, filename, s3_key, public_url, page_count, session_id))
         
     conn.commit()
     cursor.close()
     conn.close()
-    logger.info(f"Saved document metadata to DB: {filename} ({doc_id})")
+    logger.info(f"Saved document metadata to DB: {filename} ({doc_id}) for session '{session_id}'")
 
-def db_list_docs() -> List[dict]:
-    """Lists all indexed documents registered in the database."""
+def db_list_docs(session_id: Optional[str] = None) -> List[dict]:
+    """Lists all indexed documents uploaded by current session_id."""
     conn = get_connection()
     cursor = conn.cursor()
     is_pg = is_postgres_conn(conn)
     
-    query = "SELECT doc_id, filename, s3_key, public_url, page_count, created_at FROM uploaded_pdfs ORDER BY created_at DESC;"
-    cursor.execute(query)
+    if session_id:
+        if is_pg:
+            query = """
+                SELECT doc_id, filename, s3_key, public_url, page_count, session_id, created_at 
+                FROM uploaded_pdfs 
+                WHERE session_id = %s 
+                ORDER BY created_at DESC;
+            """
+            cursor.execute(query, (session_id,))
+        else:
+            query = """
+                SELECT doc_id, filename, s3_key, public_url, page_count, session_id, created_at 
+                FROM uploaded_pdfs 
+                WHERE session_id = ? 
+                ORDER BY created_at DESC;
+            """
+            cursor.execute(query, (session_id,))
+    else:
+        query = "SELECT doc_id, filename, s3_key, public_url, page_count, session_id, created_at FROM uploaded_pdfs ORDER BY created_at DESC;"
+        cursor.execute(query)
+        
     rows = cursor.fetchall()
     
     docs = []
@@ -132,16 +171,17 @@ def db_list_docs() -> List[dict]:
                 "s3_key": r[2],
                 "public_url": r[3],
                 "page_count": r[4],
-                "created_at": str(r[5])
+                "session_id": r[5],
+                "created_at": str(r[6])
             })
         else:
-            # sqlite3.Row emulation
             docs.append({
                 "doc_id": r["doc_id"],
                 "filename": r["filename"],
                 "s3_key": r["s3_key"],
                 "public_url": r["public_url"],
                 "page_count": r["page_count"],
+                "session_id": r["session_id"],
                 "created_at": str(r["created_at"])
             })
             

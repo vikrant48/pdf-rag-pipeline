@@ -420,44 +420,91 @@
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            gap: 1.2rem;
             margin-bottom: 1.5rem;
-            padding-right: 0.5rem;
-        }
-
-        .chat-bubble {
-            max-width: 80%;
-            padding: 1rem;
+            padding: 1.2rem;
+            background: rgba(0, 0, 0, 0.2);
             border-radius: 12px;
-            font-size: 0.9rem;
-            line-height: 1.5;
-            animation: slideUp 0.3s ease;
-            word-wrap: break-word;
+            border: 1px solid rgba(255, 255, 255, 0.03);
         }
 
-        .chat-bubble.user {
+        .chat-message {
+            display: flex;
+            gap: 0.85rem;
+            animation: slideUp 0.3s ease;
+            align-items: flex-start;
+        }
+
+        .chat-message.user {
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+        .chat-message.user .message-avatar {
+            background: linear-gradient(135deg, var(--primary-color), #2563eb);
+            color: white;
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.35);
+        }
+
+        .chat-message.assistant .message-avatar {
+            background: linear-gradient(135deg, var(--accent-purple), #7c3aed);
+            color: white;
+            box-shadow: 0 0 8px rgba(139, 92, 246, 0.35);
+        }
+
+        .message-content {
+            display: flex;
+            flex-direction: column;
+            max-width: 75%;
+        }
+
+        .chat-message.user .message-content {
+            align-items: flex-end;
+        }
+
+        .chat-message.assistant .message-content {
+            align-items: flex-start;
+        }
+
+        .message-header {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .message-text {
+            padding: 0.8rem 1rem;
+            border-radius: 12px;
+            font-size: 0.88rem;
+            line-height: 1.5;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .chat-message.user .message-text {
             background-color: var(--primary-color);
             color: white;
-            align-self: flex-end;
-            border-bottom-right-radius: 3px;
+            border-top-right-radius: 2px;
         }
 
-        .chat-bubble.assistant {
+        .chat-message.assistant .message-text {
             background-color: rgba(255, 255, 255, 0.04);
             border: 1px solid rgba(255, 255, 255, 0.05);
             color: var(--text-main);
-            align-self: flex-start;
-            border-bottom-left-radius: 3px;
-        }
-
-        .chat-bubble.system {
-            align-self: center;
-            background: transparent;
-            color: var(--text-muted);
-            font-size: 0.75rem;
-            font-weight: 500;
-            text-align: center;
-            max-width: 100%;
+            border-top-left-radius: 2px;
         }
 
         .chat-input-wrapper {
@@ -485,14 +532,36 @@
             box-shadow: 0 0 15px rgba(59, 130, 246, 0.1);
         }
 
-        .streaming-indicator {
+        /* Typing indicator bounce */
+        .typing-indicator-dot {
             display: inline-block;
-            width: 8px;
-            height: 15px;
-            background-color: var(--primary-color);
-            margin-left: 2px;
-            vertical-align: middle;
-            animation: pulse 0.7s infinite alternate;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: var(--text-muted);
+            animation: bounce 1.4s infinite ease-in-out both;
+            margin-right: 3px;
+        }
+
+        .typing-indicator-dot:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .typing-indicator-dot:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+
+            0%,
+            80%,
+            100% {
+                transform: scale(0);
+            }
+
+            40% {
+                transform: scale(1.0);
+            }
         }
 
         /* Animations */
@@ -629,8 +698,14 @@
 
             <div class="chat-container">
                 <div class="chat-messages" id="chat-thread">
-                    <div class="chat-bubble assistant">Hello! I am ready to answer your questions regarding the selected
-                        document files. Ask me anything.</div>
+                    <div class="chat-message assistant">
+                        <div class="message-avatar">AI</div>
+                        <div class="message-content">
+                            <div class="message-header">RAG Assistant</div>
+                            <div class="message-text">Hello! I am ready to answer your questions regarding the selected
+                                document files. Ask me anything.</div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="chat-input-wrapper">
@@ -670,7 +745,7 @@
             container.innerHTML = '<div class="list-empty">Loading indexed registry...</div>';
 
             try {
-                const response = await fetch("/documents");
+                const response = await fetch(`/documents?session_id=${sessionId}`);
                 const data = await response.json();
                 indexedDocs = data.documents || [];
 
@@ -738,7 +813,7 @@
                 const response = await fetch("/select", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ selection: selection })
+                    body: JSON.stringify({ selection: selection, session_id: sessionId })
                 });
                 const result = await response.json();
 
@@ -772,6 +847,7 @@
 
             const formData = new FormData();
             formData.append("file", file);
+            formData.append("session_id", sessionId);
 
             try {
                 const response = await fetch("/ingest", {
@@ -833,6 +909,50 @@
             }
         }
 
+        function appendMessage(sender, text) {
+            const thread = document.getElementById("chat-thread");
+            const msgEl = document.createElement("div");
+            msgEl.className = `chat-message ${sender}`;
+
+            const avatar = sender === "user" ? "U" : "AI";
+            const header = sender === "user" ? "You" : "RAG Assistant";
+
+            msgEl.innerHTML = `
+                <div class="message-avatar">${avatar}</div>
+                <div class="message-content">
+                    <div class="message-header">${header}</div>
+                    <div class="message-text"></div>
+                </div>
+            `;
+
+            msgEl.querySelector(".message-text").textContent = text;
+            thread.appendChild(msgEl);
+            thread.scrollTop = thread.scrollHeight;
+            return msgEl;
+        }
+
+        function appendLoadingMessage() {
+            const thread = document.getElementById("chat-thread");
+            const msgEl = document.createElement("div");
+            msgEl.className = "chat-message assistant";
+            msgEl.id = "loading-bubble";
+
+            msgEl.innerHTML = `
+                <div class="message-avatar">AI</div>
+                <div class="message-content">
+                    <div class="message-header">RAG Assistant</div>
+                    <div class="message-text">
+                        <span class="typing-indicator-dot"></span>
+                        <span class="typing-indicator-dot"></span>
+                        <span class="typing-indicator-dot"></span>
+                    </div>
+                </div>
+            `;
+            thread.appendChild(msgEl);
+            thread.scrollTop = thread.scrollHeight;
+            return msgEl;
+        }
+
         async function submitQuery() {
             const input = document.getElementById("user-query");
             const queryText = input.value.trim();
@@ -842,76 +962,40 @@
             input.disabled = true;
             document.getElementById("send-query-btn").disabled = true;
 
-            const chatThread = document.getElementById("chat-messages");
-            const thread = document.getElementById("chat-thread");
+            // Append User Message
+            appendMessage("user", queryText);
 
-            // User speech bubble
-            const userBubble = document.createElement("div");
-            userBubble.className = "chat-bubble user";
-            userBubble.textContent = queryText;
-            thread.appendChild(userBubble);
-            thread.scrollTop = thread.scrollHeight;
-
-            // Assistant loading/response bubble
-            const assistantBubble = document.createElement("div");
-            assistantBubble.className = "chat-bubble assistant";
-            assistantBubble.innerHTML = '<span class="streaming-indicator"></span>';
-            thread.appendChild(assistantBubble);
-            thread.scrollTop = thread.scrollHeight;
+            // Append Loading Indicator
+            const loaderBubble = appendLoadingMessage();
 
             try {
-                // Post payload request supporting streaming
-                const response = await fetch("/query_stream", {
+                // Post payload request returning complete block answers
+                const response = await fetch("/query", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         question: queryText,
                         session_id: sessionId,
-                        selection: selectedDocIds.length > 0 ? undefined : "all" // selection resolved by /select state
+                        selection: selectedDocIds.length > 0 ? undefined : "all"
                     })
                 });
 
                 if (!response.ok) {
-                    throw new Error("HTTP error on streaming path.");
+                    throw new Error("HTTP error on block query retrieval.");
                 }
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-                let buffer = "";
-                assistantBubble.innerHTML = ""; // Clear loader indicator
+                const result = await response.json();
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+                // Remove typing loader bubble
+                loaderBubble.remove();
 
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n\n");
-                    // Retain trailing incomplete line elements
-                    buffer = lines.pop();
-
-                    for (const line of lines) {
-                        if (line.trim().startsWith("data: ")) {
-                            const rawData = line.trim().slice(6);
-                            if (rawData) {
-                                // Append letter response tokens
-                                assistantBubble.innerText += rawData;
-                                thread.scrollTop = thread.scrollHeight;
-                            }
-                        }
-                    }
-                }
-
-                // Print remaining buffer content
-                if (buffer.trim().startsWith("data: ")) {
-                    const rawData = buffer.trim().slice(6);
-                    if (rawData) {
-                        assistantBubble.innerText += rawData;
-                    }
-                }
+                // Append complete response block
+                appendMessage("assistant", result.answer || "No response received.");
 
             } catch (err) {
-                console.error("Streaming error: ", err);
-                assistantBubble.innerHTML = `<span style="color: #ef4444;">Error retrieving streaming answer from model pipeline.</span>`;
+                console.error("Query block error: ", err);
+                loaderBubble.remove();
+                appendMessage("assistant", "Error: Failed to fetch query response from the server.");
             } finally {
                 input.disabled = false;
                 document.getElementById("send-query-btn").disabled = false;

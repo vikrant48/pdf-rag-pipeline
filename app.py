@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import List, Union, Optional
-from fastapi import FastAPI, HTTPException, Body, UploadFile, File
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from pipeline import RAGPipeline, RAGConfig
@@ -34,6 +34,7 @@ class QueryPayload(BaseModel):
 
 class SelectionPayload(BaseModel):
     selection: Union[str, int, List[int]]
+    session_id: Optional[str] = None
 
 @app.get("/", response_class=HTMLResponse)
 async def read_dashboard():
@@ -74,10 +75,10 @@ async def startup_event():
         logger.info("No default PDFs found in 'data/' to auto-ingest during startup.")
 
 @app.get("/documents")
-async def get_documents():
+async def get_documents(session_id: Optional[str] = None):
     """Retrieve the collection list of indexed documents registry."""
     try:
-        docs = pipeline.list_documents()
+        docs = pipeline.list_documents(session_id)
         return {"documents": docs}
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
@@ -87,10 +88,10 @@ async def get_documents():
 async def select_documents(payload: SelectionPayload):
     """Set the document subset scope for subsequent query operations."""
     try:
-        pipeline.select_documents(payload.selection)
+        pipeline.select_documents(payload.selection, payload.session_id)
         selected_docs = []
         if pipeline.selected_doc_ids:
-            all_docs = pipeline.list_documents()
+            all_docs = pipeline.list_documents(payload.session_id)
             selected_docs = [d for d in all_docs if d["doc_id"] in pipeline.selected_doc_ids]
         return {
             "status": "success",
@@ -102,7 +103,7 @@ async def select_documents(payload: SelectionPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/ingest")
-async def ingest_document(file: UploadFile = File(...)):
+async def ingest_document(file: UploadFile = File(...), session_id: str = Form("system")):
     """
     Uploads user provided PDF to Supabase Storage S3, logs metadata records,
     and runs full text index parser ingestion.
@@ -110,7 +111,7 @@ async def ingest_document(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF file uploads are supported.")
         
-    local_dir = "data"
+    local_dir = os.path.join("data", "uploads", session_id)
     os.makedirs(local_dir, exist_ok=True)
     local_path = os.path.join(local_dir, file.filename)
     
@@ -136,7 +137,7 @@ async def ingest_document(file: UploadFile = File(...)):
         
         # Run ingestion
         s3_meta = {local_path: (s3_key, public_url)}
-        pipeline.ingest([local_path], s3_metadata=s3_meta)
+        pipeline.ingest([local_path], s3_metadata=s3_meta, session_id=session_id)
         
         # Return registry doc representation
         registered_doc = db_get_doc_by_id(doc_id)
@@ -159,7 +160,7 @@ async def query_pipeline(payload: QueryPayload):
         )
     try:
         if payload.selection is not None:
-            pipeline.select_documents(payload.selection)
+            pipeline.select_documents(payload.selection, payload.session_id)
             
         answer = pipeline.query(
             question=payload.question, 
@@ -185,7 +186,7 @@ async def query_pipeline_stream(payload: QueryPayload):
         )
         
     if payload.selection is not None:
-        pipeline.select_documents(payload.selection)
+        pipeline.select_documents(payload.selection, payload.session_id)
 
     async def sse_generator():
         try:

@@ -11,7 +11,7 @@ load_dotenv()
 # Configure logging
 logger = logging.getLogger(__name__)
 
-DISABLE_RERANKER = os.getenv("DISABLE_RERANKER", "false").lower() == "true"
+DISABLE_RERANKER = os.getenv("DISABLE_RERANKER", str(os.getenv("RENDER") == "true")).lower() == "true"
 
 if not DISABLE_RERANKER:
     from sentence_transformers import CrossEncoder

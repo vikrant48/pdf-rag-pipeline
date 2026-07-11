@@ -1,5 +1,4 @@
 import os
-import psycopg2
 import sqlite3
 import logging
 from typing import List, Tuple, Optional
@@ -12,6 +11,7 @@ def get_connection():
     """Returns a database connection (psycopg2 for PostgreSQL or sqlite3 for SQLite fallback)."""
     if DB_URL:
         try:
+            import psycopg2
             conn = psycopg2.connect(DB_URL)
             logger.info("Connected to Supabase PostgreSQL database.")
             return conn

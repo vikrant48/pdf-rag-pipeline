@@ -22,7 +22,10 @@ WORKDIR /app
 # Copy requirements file first to utilize Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install CPU-only PyTorch first to optimize size and memory footprint
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install the rest of the Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Run Python script during build stage to pre-download model weights into container cache

@@ -1,6 +1,4 @@
 import os
-import boto3
-from botocore.client import Config
 import logging
 from typing import Tuple, Optional
 
@@ -18,6 +16,8 @@ def get_s3_client():
         logger.warning("Supabase S3 credentials are not fully defined in .env. Falling back to local storage.")
         return None
     try:
+        import boto3
+        from botocore.client import Config
         s3 = boto3.client(
             's3',
             endpoint_url=ENDPOINT_URL,

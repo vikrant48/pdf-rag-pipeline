@@ -2,10 +2,13 @@ import os
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import List
+from typing import List, TYPE_CHECKING
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
+
+if TYPE_CHECKING:
+    from langchain_community.vectorstores import Chroma
 
 # Load environment variables from .env
 load_dotenv()
@@ -16,7 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class IndexBundle:
     bm25: BM25Okapi
-    vectorstore: Chroma
+    vectorstore: "Chroma"
     chunks: List[Document]
 
 def build_indexes(chunks: List[Document]) -> IndexBundle:

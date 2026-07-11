@@ -56,6 +56,10 @@ async def startup_event():
         logger.error(f"Failed to initialize database: {e}")
         
     # 2. Scan and ingest new data PDFs
+    if os.getenv("DISABLE_STARTUP_INGESTION", "false").lower() == "true":
+        logger.info("Startup PDF auto-ingestion skipped due to DISABLE_STARTUP_INGESTION=true config.")
+        return
+
     pdf_dir = "data"
     os.makedirs(pdf_dir, exist_ok=True)
     pdfs = [os.path.join(pdf_dir, f) for f in os.listdir(pdf_dir) if f.endswith(".pdf")]

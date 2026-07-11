@@ -5,8 +5,6 @@ from dataclasses import dataclass
 from typing import List
 from dotenv import load_dotenv
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
 from rank_bm25 import BM25Okapi
 
 # Load environment variables from .env
@@ -47,6 +45,9 @@ def build_indexes(chunks: List[Document]) -> IndexBundle:
     # (starts/ends with alphanumeric, contains only alphanumeric, underscores, or hyphens)
     collection_name = f"col_{doc_ids_hash[:32]}"
     logger.info(f"Generated Chroma collection name: {collection_name} (derived from doc_ids hash)")
+
+    from langchain_community.vectorstores import Chroma
+    from langchain_huggingface import HuggingFaceEmbeddings
 
     # 2. Build Chroma Vector Store
     # Retrieve embedding model and persistence directory from env or defaults
